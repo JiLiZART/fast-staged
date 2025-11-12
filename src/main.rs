@@ -66,18 +66,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Загрузка конфигурации
     let config = load_config("config.toml")?;
 
-    print!("Loading config... {:?}", config);
-
     // Получение измененных файлов
     let changed_files = get_changed_files().await?;
 
     // Сопоставление файлов с командами
     let file_commands = match_files_to_commands(&config, &changed_files);
 
-    // Запуск команд с UI
+    // Запуск команд и UI параллельно
     let states = execute_commands(file_commands).await;
 
-    // Отображение прогресса
     run_ui(states).await?;
 
     Ok(())
@@ -134,7 +131,6 @@ fn match_files_to_commands(
 }
 
 async fn execute_commands(file_commands: HashMap<String, Vec<String>>) -> Vec<TaskState> {
-    let mut tasks = Vec::new();
     let mut states = Vec::new();
 
     for (filename, commands) in file_commands {
@@ -148,21 +144,24 @@ async fn execute_commands(file_commands: HashMap<String, Vec<String>>) -> Vec<Ta
 
             states.push(state.clone());
 
-            // Запускаем каждую команду в отдельной задаче
-            let task = tokio::spawn(async move {
-                // Обновляем статус
-                *state.status.lock().await = CommandStatus::Running;
+            // Запускаем каждую команду в отдельной задаче (не ждем завершения)
+            let state_clone = state.clone();
+
+            tokio::spawn(async move {
+                // Обновляем статус на Running
+                *state_clone.status.lock().await = CommandStatus::Running;
+                *state_clone.progress.lock().await = 0.1;
 
                 // Запускаем команду
                 let output = tokio::process::Command::new("sh")
                     .arg("-c")
-                    .arg(&state.command)
+                    .arg(&state_clone.command)
                     .output()
                     .await;
 
                 // Обновляем статус по результату
-                let mut status = state.status.lock().await;
-                let mut progress = state.progress.lock().await;
+                let mut status = state_clone.status.lock().await;
+                let mut progress = state_clone.progress.lock().await;
 
                 match output {
                     Ok(output) if output.status.success() => {
@@ -175,21 +174,14 @@ async fn execute_commands(file_commands: HashMap<String, Vec<String>>) -> Vec<Ta
                     }
                 }
             });
-
-            tasks.push(task);
         }
     }
 
-    // Ждем завершения всех задач
-    for task in tasks {
-        let _ = task.await;
-    }
-
+    // Возвращаем состояния сразу, не ждем завершения задач
     states
 }
 
-fn setup_terminal()
--> Result<ratatui::Terminal<CrosstermBackend<io::Stdout>>, Box<dyn std::error::Error>> {
+fn setup_terminal() -> Result<ratatui::Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -198,9 +190,7 @@ fn setup_terminal()
     Ok(terminal)
 }
 
-fn restore_terminal(
-    mut terminal: ratatui::Terminal<CrosstermBackend<io::Stdout>>,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn restore_terminal(mut terminal: ratatui::Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
@@ -216,6 +206,15 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
     let mut terminal = setup_terminal()?;
 
     loop {
+        // Собираем данные о статусах задач
+        let mut statuses = Vec::new();
+
+        for state in &states {
+            let status = state.status.lock().await;
+            let progress = state.progress.lock().await;
+            statuses.push((status.clone(), *progress));
+        }
+
         terminal.draw(|f| {
             let areas = Layout::default()
                 .direction(Direction::Vertical)
@@ -226,40 +225,50 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
             // Заголовок
             let title = Paragraph::new("Running tasks...")
                 .block(Block::default().borders(Borders::ALL).title("Status"));
+
             f.render_widget(title, areas[0]);
 
             // Список задач с индикаторами
-            let task_areas = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints(vec![Constraint::Length(3); states.len()])
-                .split(areas[1]);
+            if !states.is_empty() {
+                let task_areas = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints(vec![Constraint::Length(3); states.len()])
+                    .split(areas[1]);
 
-            for (i, state) in states.iter().enumerate() {
-                let status = state.status.blocking_lock();
-                let progress = state.progress.blocking_lock();
+                for (i, (state, (status, progress))) in
+                    states.iter().zip(statuses.iter()).enumerate()
+                {
+                    let title_text = format!("{}: {}", state.filename, state.command);
+                    let color = match status {
+                        CommandStatus::Done => Color::Green,
+                        CommandStatus::Failed => Color::Red,
+                        CommandStatus::Running => Color::Yellow,
+                        CommandStatus::Waiting => Color::Gray,
+                    };
 
-                let title_text = format!("{}: {}", state.filename, state.command);
-                let gauge = Gauge::default()
-                    .block(Block::default().title(title_text.as_str()))
-                    .gauge_style(Style::default().fg(Color::Yellow))
-                    .percent((*progress * 100.0) as u16)
-                    .label(format!("{} {:.0}%", status, *progress * 100.0));
+                    let gauge = Gauge::default()
+                        .block(Block::default().title(title_text.as_str()))
+                        .gauge_style(Style::default().fg(color))
+                        .percent((*progress * 100.0) as u16)
+                        .label(format!("{} {:.0}%", status, *progress * 100.0));
 
-                f.render_widget(gauge, task_areas[i]);
+                    f.render_widget(gauge, task_areas[i]);
+                }
             }
         })?;
 
         // Проверка завершения всех задач
-        let all_done = states.iter().all(|s| {
-            let status = s.status.blocking_lock();
-            *status == CommandStatus::Done || *status == CommandStatus::Failed
-        });
+        let all_done = statuses
+            .iter()
+            .all(|(status, _)| *status == CommandStatus::Done || *status == CommandStatus::Failed);
 
         if all_done {
+            // Ждем немного перед закрытием, чтобы пользователь увидел финальный статус
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             break;
         }
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
 
     restore_terminal(terminal)?;
