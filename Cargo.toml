@@ -1,0 +1,13 @@
+[package]
+name = "exec-staged"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+toml = "0.9.8"
+serde = { version = "1.0", features = ["derive"] }
+asyncgit = { version = "0.27.0", default-features = false }
+ratatui = "0.29"
+crossterm = "0.29"
+glob = "0.3.3"

@@ -1,0 +1,11 @@
+[patterns]
+"*.(js|ts|tsx|jsx)" = [
+    "npm run prettier:staged",
+    "npm run lint:staged",
+    "npm run test:related",
+    "npm run i18n:scan"
+]
+"*.css" = [
+    "npm run prettier:staged",
+    "npm run stylelint:staged"
+]
