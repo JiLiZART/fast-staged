@@ -3,7 +3,7 @@ use fast_glob::glob_match;
 
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Gauge, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -211,8 +211,7 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
 
         for state in &states {
             let status = state.status.lock().await;
-            let progress = state.progress.lock().await;
-            statuses.push((status.clone(), *progress));
+            statuses.push(status.clone());
         }
 
         terminal.draw(|f| {
@@ -228,39 +227,35 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
 
             f.render_widget(title, areas[0]);
 
-            // Список задач с индикаторами
+            // Список задач
             if !states.is_empty() {
-                let task_areas = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints(vec![Constraint::Length(3); states.len()])
-                    .split(areas[1]);
+                let items: Vec<ListItem> = states
+                    .iter()
+                    .zip(statuses.iter())
+                    .map(|(state, status)| {
+                        let (symbol, color) = match status {
+                            CommandStatus::Done => ("✓", Color::Green),
+                            CommandStatus::Failed => ("✗", Color::Red),
+                            CommandStatus::Running => ("⟳", Color::Yellow),
+                            CommandStatus::Waiting => ("⏳", Color::Gray),
+                        };
 
-                for (i, (state, (status, progress))) in
-                    states.iter().zip(statuses.iter()).enumerate()
-                {
-                    let title_text = format!("{}: {}", state.filename, state.command);
-                    let color = match status {
-                        CommandStatus::Done => Color::Green,
-                        CommandStatus::Failed => Color::Red,
-                        CommandStatus::Running => Color::Yellow,
-                        CommandStatus::Waiting => Color::Gray,
-                    };
+                        let text = format!("{} {}: {}", symbol, state.filename, state.command);
+                        ListItem::new(text).style(Style::default().fg(color))
+                    })
+                    .collect();
 
-                    let gauge = Gauge::default()
-                        .block(Block::default().title(title_text.as_str()))
-                        .gauge_style(Style::default().fg(color))
-                        .percent((*progress * 100.0) as u16)
-                        .label(format!("{} {:.0}%", status, *progress * 100.0));
+                let list =
+                    List::new(items).block(Block::default().borders(Borders::ALL).title("Tasks"));
 
-                    f.render_widget(gauge, task_areas[i]);
-                }
+                f.render_widget(list, areas[1]);
             }
         })?;
 
         // Проверка завершения всех задач
         let all_done = statuses
             .iter()
-            .all(|(status, _)| *status == CommandStatus::Done || *status == CommandStatus::Failed);
+            .all(|status| *status == CommandStatus::Done || *status == CommandStatus::Failed);
 
         if all_done {
             // Ждем немного перед закрытием, чтобы пользователь увидел финальный статус

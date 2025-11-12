@@ -1,7 +1,8 @@
 [package]
-name = "exec-staged"
+name = "fast-staged"
 version = "0.1.0"
 edition = "2024"
+authors = ["Nikolay Kost <jilizart@gmail.com>"]
 
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
