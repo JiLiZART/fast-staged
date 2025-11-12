@@ -1,8 +1,8 @@
-use asyncgit::Repository;
-use glob::Pattern;
+use anyhow::Result;
+use fast_glob::glob_match;
+
 use ratatui::{
     prelude::*,
-    symbols,
     widgets::{Block, Borders, Gauge, Paragraph},
 };
 use std::sync::Arc;
@@ -11,15 +11,22 @@ use tokio::sync::Mutex;
 use std::fs;
 use toml;
 
+use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::backend::CrosstermBackend;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::io;
 
 #[derive(Clone)]
 struct TaskState {
     filename: String,
     command: String,
-    status: Arc<Mutex<String>>, // "Running", "Done", "Failed"
-    progress: Arc<Mutex<f64>>,  // от 0.0 до 1.0
+    status: Arc<Mutex<CommandStatus>>,
+    progress: Arc<Mutex<f64>>, // от 0.0 до 1.0
 }
 
 type FilePattern = String;
@@ -33,19 +40,33 @@ struct Config {
     patterns: HashMap<FilePattern, CommandList>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 enum CommandStatus {
     Waiting,
     Running,
     Done,
     Failed,
-    Cancelled,
+    // Cancelled,
+}
+
+impl std::fmt::Display for CommandStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommandStatus::Waiting => write!(f, "Waiting"),
+            CommandStatus::Running => write!(f, "Running"),
+            CommandStatus::Done => write!(f, "Done"),
+            CommandStatus::Failed => write!(f, "Failed"),
+            // CommandStatus::Cancelled => write!(f, "Cancelled"),
+        }
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Загрузка конфигурации
     let config = load_config("config.toml")?;
+
+    print!("Loading config... {:?}", config);
 
     // Получение измененных файлов
     let changed_files = get_changed_files().await?;
@@ -62,25 +83,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn load_config(path: &str) -> Result<Config, Box<dyn std::error::Error>> {
+fn load_config(path: &str) -> Result<Config> {
     let config_content = fs::read_to_string(path)?;
     let config: Config = toml::from_str(&config_content)?;
+
     Ok(config)
 }
 
-async fn get_changed_files() -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    // Используйте asyncgit для получения списка файлов
-    // через git status --porcelain или git diff --name-only
-    let repo = asyncgit::Repository::open(".").await?;
-    let statuses = repo.statuses().await?;
+async fn get_changed_files() -> Result<Vec<String>> {
+    // Используем gix для получения списка измененных файлов
+    let changed_files = tokio::task::spawn_blocking(|| -> Result<Vec<String>> {
+        let repo = gix::open(".")?;
+        let index = repo.index()?;
 
-    let changed_files: Vec<String> = statuses
-        .iter()
-        .filter(|s| s.is_modified() || s.is_added() || s.is_renamed())
-        .map(|s| s.path().to_string())
-        .collect();
+        let mut changed_files = Vec::new();
 
-    Ok(changed_files)
+        // Получаем файлы из индекса (staged files)
+        for entry in index.entries() {
+            changed_files.push(entry.path(&index).to_string());
+        }
+
+        Ok(changed_files)
+    })
+    .await?;
+
+    Ok(changed_files?)
 }
 
 fn match_files_to_commands(
@@ -91,11 +118,16 @@ fn match_files_to_commands(
 
     for file in changed_files {
         for (pattern, commands) in &config.patterns {
-            if Pattern::new(pattern).unwrap().matches(file) {
+            if glob_match(pattern, file) {
+                println!("Found pattern {} for file {}", pattern, file);
                 file_commands.insert(file.clone(), commands.clone());
                 break; // Первое совпадение
             }
         }
+    }
+
+    if file_commands.is_empty() {
+        println!("No commands found");
     }
 
     file_commands
@@ -156,6 +188,29 @@ async fn execute_commands(file_commands: HashMap<String, Vec<String>>) -> Vec<Ta
     states
 }
 
+fn setup_terminal()
+-> Result<ratatui::Terminal<CrosstermBackend<io::Stdout>>, Box<dyn std::error::Error>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let terminal = ratatui::Terminal::new(backend)?;
+    Ok(terminal)
+}
+
+fn restore_terminal(
+    mut terminal: ratatui::Terminal<CrosstermBackend<io::Stdout>>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
 async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>> {
     // Инициализация терминала
     let mut terminal = setup_terminal()?;
@@ -166,7 +221,7 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
                 .direction(Direction::Vertical)
                 .margin(1)
                 .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
-                .split(f.size());
+                .split(f.area());
 
             // Заголовок
             let title = Paragraph::new("Running tasks...")
@@ -176,20 +231,19 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
             // Список задач с индикаторами
             let task_areas = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints(vec![Constraint::Length(3); states.len()].as_ref())
+                .constraints(vec![Constraint::Length(3); states.len()])
                 .split(areas[1]);
 
             for (i, state) in states.iter().enumerate() {
-                let status = state.status.block_on_lock();
-                let progress = state.progress.block_on_lock();
+                let status = state.status.blocking_lock();
+                let progress = state.progress.blocking_lock();
 
+                let title_text = format!("{}: {}", state.filename, state.command);
                 let gauge = Gauge::default()
-                    .block(
-                        Block::default().title(&format!("{}: {}", state.filename, state.command)),
-                    )
+                    .block(Block::default().title(title_text.as_str()))
                     .gauge_style(Style::default().fg(Color::Yellow))
-                    .percent((progress * 100.0) as u16)
-                    .label(format!("{} {:.0}%", status, progress * 100.0));
+                    .percent((*progress * 100.0) as u16)
+                    .label(format!("{} {:.0}%", status, *progress * 100.0));
 
                 f.render_widget(gauge, task_areas[i]);
             }
@@ -197,8 +251,8 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
 
         // Проверка завершения всех задач
         let all_done = states.iter().all(|s| {
-            let status = s.status.block_on_lock();
-            status == CommandStatus::Done || status == CommandStatus::Failed
+            let status = s.status.blocking_lock();
+            *status == CommandStatus::Done || *status == CommandStatus::Failed
         });
 
         if all_done {
@@ -208,6 +262,6 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
-    restore_terminal()?;
+    restore_terminal(terminal)?;
     Ok(())
 }

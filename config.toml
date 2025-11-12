@@ -9,3 +9,7 @@
     "npm run prettier:staged",
     "npm run stylelint:staged"
 ]
+"**/*.rs" = [
+    "cargo fmt",
+    "cargo clippy",
+]

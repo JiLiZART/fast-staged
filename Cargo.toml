@@ -7,7 +7,8 @@ edition = "2024"
 tokio = { version = "1.0", features = ["full"] }
 toml = "0.9.8"
 serde = { version = "1.0", features = ["derive"] }
-asyncgit = { version = "0.27.0", default-features = false }
+gix = "0.74.1"
 ratatui = "0.29"
 crossterm = "0.29"
-glob = "0.3.3"
+fast-glob = "1.0"
+anyhow = "1.0.99"
