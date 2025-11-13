@@ -20,12 +20,15 @@ use ratatui::backend::CrosstermBackend;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io;
+use std::time::Instant;
 
 #[derive(Clone)]
 struct TaskState {
     filename: String,
     command: String,
     status: Arc<Mutex<CommandStatus>>,
+    started_at: Arc<Mutex<Option<Instant>>>,
+    duration_ms: Arc<Mutex<Option<u128>>>,
 }
 
 type FilePattern = String;
@@ -153,6 +156,8 @@ async fn execute_commands(file_commands: HashMap<String, Vec<String>>) -> Vec<Ta
                 filename: filename.clone(),
                 command: command.clone(),
                 status: Arc::new(Mutex::new(CommandStatus::Waiting)),
+                started_at: Arc::new(Mutex::new(None)),
+                duration_ms: Arc::new(Mutex::new(None)),
             };
 
             states.push(state.clone());
@@ -163,6 +168,7 @@ async fn execute_commands(file_commands: HashMap<String, Vec<String>>) -> Vec<Ta
             tokio::spawn(async move {
                 // Обновляем статус на Running
                 *state_clone.status.lock().await = CommandStatus::Running;
+                *state_clone.started_at.lock().await = Some(Instant::now());
 
                 // Запускаем команду
                 let output = tokio::process::Command::new("sh")
@@ -173,6 +179,8 @@ async fn execute_commands(file_commands: HashMap<String, Vec<String>>) -> Vec<Ta
 
                 // Обновляем статус по результату
                 let mut status = state_clone.status.lock().await;
+                let mut started_at = state_clone.started_at.lock().await;
+                let mut duration_ms = state_clone.duration_ms.lock().await;
 
                 match output {
                     Ok(output) if output.status.success() => {
@@ -181,6 +189,10 @@ async fn execute_commands(file_commands: HashMap<String, Vec<String>>) -> Vec<Ta
                     _ => {
                         *status = CommandStatus::Failed;
                     }
+                }
+                if let Some(start) = *started_at {
+                    *duration_ms = Some(start.elapsed().as_millis());
+                    *started_at = None;
                 }
             });
         }
@@ -217,14 +229,18 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
     loop {
         // Собираем данные о статусах задач
         let mut statuses = Vec::new();
+        let mut durations = Vec::new();
         let mut group = HashMap::new();
 
         for state in &states {
-            let status = state.status.lock().await;
             let command = state.command.clone();
+            let status = state.status.lock().await;
+            let duration = state.duration_ms.lock().await;
+            let duration = duration.unwrap_or(0);
 
             group.insert(command, status.clone());
             statuses.push(status.clone());
+            durations.push(duration.clone());
         }
 
         terminal.draw(|f| {
@@ -242,12 +258,21 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
 
             // Список задач
             if !states.is_empty() {
-                let items: Vec<ListItem> = group
+                let items: Vec<ListItem> = states
                     .iter()
-                    .map(|(command, status)| {
+                    .zip(statuses.iter())
+                    .zip(durations.iter())
+                    .map(|(item, duration)| {
+                        let (state, status) = item;
                         let (symbol, color) = status.colored();
-
-                        let text = format!("{} {}:", symbol, command);
+                        // показываем время только для Done/Failed
+                        let duration_suffix = match status {
+                            CommandStatus::Done | CommandStatus::Failed => {
+                                format!(" {}ms", duration)
+                            }
+                            _ => String::new(),
+                        };
+                        let text = format!("{} {}:{}", symbol, state.command, duration_suffix);
                         ListItem::new(text).style(Style::default().fg(color))
                     })
                     .collect();
