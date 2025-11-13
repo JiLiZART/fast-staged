@@ -26,7 +26,6 @@ struct TaskState {
     filename: String,
     command: String,
     status: Arc<Mutex<CommandStatus>>,
-    progress: Arc<Mutex<f64>>, // от 0.0 до 1.0
 }
 
 type FilePattern = String;
@@ -61,10 +60,25 @@ impl std::fmt::Display for CommandStatus {
     }
 }
 
+trait StatusDisplay {
+    fn colored(&self) -> (&str, Color);
+}
+
+impl StatusDisplay for CommandStatus {
+    fn colored(&self) -> (&str, Color) {
+        match self {
+            CommandStatus::Done => ("✓", Color::Green),
+            CommandStatus::Failed => ("✗", Color::Red),
+            CommandStatus::Running => ("⟳", Color::Yellow),
+            CommandStatus::Waiting => ("⏳", Color::Gray),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Загрузка конфигурации
-    let config = load_config("config.toml")?;
+    let config = load_config(".fast-staged.toml")?;
 
     // Получение измененных файлов
     let changed_files = get_changed_files().await?;
@@ -139,7 +153,6 @@ async fn execute_commands(file_commands: HashMap<String, Vec<String>>) -> Vec<Ta
                 filename: filename.clone(),
                 command: command.clone(),
                 status: Arc::new(Mutex::new(CommandStatus::Waiting)),
-                progress: Arc::new(Mutex::new(0.0)),
             };
 
             states.push(state.clone());
@@ -150,7 +163,6 @@ async fn execute_commands(file_commands: HashMap<String, Vec<String>>) -> Vec<Ta
             tokio::spawn(async move {
                 // Обновляем статус на Running
                 *state_clone.status.lock().await = CommandStatus::Running;
-                *state_clone.progress.lock().await = 0.1;
 
                 // Запускаем команду
                 let output = tokio::process::Command::new("sh")
@@ -161,16 +173,13 @@ async fn execute_commands(file_commands: HashMap<String, Vec<String>>) -> Vec<Ta
 
                 // Обновляем статус по результату
                 let mut status = state_clone.status.lock().await;
-                let mut progress = state_clone.progress.lock().await;
 
                 match output {
                     Ok(output) if output.status.success() => {
                         *status = CommandStatus::Done;
-                        *progress = 1.0;
                     }
                     _ => {
                         *status = CommandStatus::Failed;
-                        *progress = 1.0;
                     }
                 }
             });
@@ -208,9 +217,13 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
     loop {
         // Собираем данные о статусах задач
         let mut statuses = Vec::new();
+        let mut group = HashMap::new();
 
         for state in &states {
             let status = state.status.lock().await;
+            let command = state.command.clone();
+
+            group.insert(command, status.clone());
             statuses.push(status.clone());
         }
 
@@ -222,31 +235,25 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
                 .split(f.area());
 
             // Заголовок
-            let title = Paragraph::new("Running tasks...")
-                .block(Block::default().borders(Borders::ALL).title("Status"));
+            let title = Paragraph::new(format!("Running {} tasks...", statuses.len()))
+                .block(Block::default().borders(Borders::empty()).title("Status"));
 
             f.render_widget(title, areas[0]);
 
             // Список задач
             if !states.is_empty() {
-                let items: Vec<ListItem> = states
+                let items: Vec<ListItem> = group
                     .iter()
-                    .zip(statuses.iter())
-                    .map(|(state, status)| {
-                        let (symbol, color) = match status {
-                            CommandStatus::Done => ("✓", Color::Green),
-                            CommandStatus::Failed => ("✗", Color::Red),
-                            CommandStatus::Running => ("⟳", Color::Yellow),
-                            CommandStatus::Waiting => ("⏳", Color::Gray),
-                        };
+                    .map(|(command, status)| {
+                        let (symbol, color) = status.colored();
 
-                        let text = format!("{} {}: {}", symbol, state.filename, state.command);
+                        let text = format!("{} {}:", symbol, command);
                         ListItem::new(text).style(Style::default().fg(color))
                     })
                     .collect();
 
-                let list =
-                    List::new(items).block(Block::default().borders(Borders::ALL).title("Tasks"));
+                let list = List::new(items)
+                    .block(Block::default().borders(Borders::empty()).title("Tasks"));
 
                 f.render_widget(list, areas[1]);
             }
