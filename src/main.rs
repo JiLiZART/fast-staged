@@ -1,5 +1,6 @@
 use anyhow::Result;
 use fast_glob::glob_match;
+use parse_duration::parse;
 
 use ratatui::{
     prelude::*,
@@ -230,18 +231,24 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
         // Собираем данные о статусах задач
         let mut statuses = Vec::new();
         let mut durations = Vec::new();
-        let mut group = HashMap::new();
 
         for state in &states {
-            let command = state.command.clone();
             let status = state.status.lock().await;
             let duration = state.duration_ms.lock().await;
             let duration = duration.unwrap_or(0);
 
-            group.insert(command, status.clone());
             statuses.push(status.clone());
-            durations.push(duration.clone());
+            durations.push(duration);
         }
+
+        let total_time: u128 = statuses
+            .iter()
+            .zip(durations.iter())
+            .map(|(status, duration)| match status {
+                CommandStatus::Done | CommandStatus::Failed => *duration,
+                _ => 0,
+            })
+            .sum();
 
         terminal.draw(|f| {
             let areas = Layout::default()
@@ -258,21 +265,27 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
 
             // Список задач
             if !states.is_empty() {
+                let content_areas = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Min(0), Constraint::Length(1)].as_ref())
+                    .split(areas[1]);
+
                 let items: Vec<ListItem> = states
                     .iter()
-                    .zip(statuses.iter())
-                    .zip(durations.iter())
-                    .map(|(item, duration)| {
-                        let (state, status) = item;
+                    .enumerate()
+                    .map(|(idx, state)| {
+                        let status = &statuses[idx];
+                        let duration = durations[idx];
                         let (symbol, color) = status.colored();
-                        // показываем время только для Done/Failed
-                        let duration_suffix = match status {
+                        let text = match status {
                             CommandStatus::Done | CommandStatus::Failed => {
-                                format!(" {}ms", duration)
+                                format!(
+                                    "{} {}: {} - {}ms",
+                                    symbol, state.filename, state.command, duration
+                                )
                             }
-                            _ => String::new(),
+                            _ => format!("{} {}: {}", symbol, state.filename, state.command),
                         };
-                        let text = format!("{} {}:{}", symbol, state.command, duration_suffix);
                         ListItem::new(text).style(Style::default().fg(color))
                     })
                     .collect();
@@ -280,7 +293,11 @@ async fn run_ui(states: Vec<TaskState>) -> Result<(), Box<dyn std::error::Error>
                 let list = List::new(items)
                     .block(Block::default().borders(Borders::empty()).title("Tasks"));
 
-                f.render_widget(list, areas[1]);
+                f.render_widget(list, content_areas[0]);
+
+                let total_line = Paragraph::new(format!("Total time: {}ms", total_time))
+                    .style(Style::default().fg(Color::White));
+                f.render_widget(total_line, content_areas[1]);
             }
         })?;
 

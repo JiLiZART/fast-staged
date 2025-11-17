@@ -11,7 +11,7 @@ This is a simple tool that runs commands on changed files.
 
 ## Features
 
-Uses native rust implementation of git status to get list of changed files.
-Uses parallel execution of commands.
-Uses pattern matching to match files to commands.
-Toml config file.
+- Uses native Rust implementation of git status to get list of changed files.
+- Uses parallel execution of commands.
+- Uses pattern matching to match files to commands.
+- Toml config file.
