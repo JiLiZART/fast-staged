@@ -44,7 +44,8 @@
 
 **Изменения в коде:**
 
-- Добавить `timeout: Option<Duration>` в `Config`
+- Добавить `timeout: Option<String>` в `Config`
+- Парсить timeout в структуре `Config` используя `parse_duration::parse`
 - Добавить `CommandStatus::Timeout`
 - Обернуть `Command::output().await` в `tokio::time::timeout()`
 - Обновить UI для отображения timeout статуса
@@ -209,7 +210,7 @@ timeout = "5sec"
 
 ---
 
-## [ ] Display total affected files count
+## [*] Display total affected files count
 
 **План реализации:**
 
@@ -227,7 +228,7 @@ timeout = "5sec"
 
 ---
 
-## [ ] Display total time of execution
+## [*] Display total time of execution
 
 **План реализации:**
 
@@ -246,7 +247,7 @@ timeout = "5sec"
 
 ---
 
-## [ ] Display total time of execution per command
+## [*] Display total time of execution per command
 
 **План реализации:**
 
@@ -322,7 +323,7 @@ timeout = "5sec"
 
 ---
 
-## [ ] Add config variations, read .fast-staged.toml, or fast-staged.toml or read fast-staged.json or .fast-staged.json or read "fast-staged" section in package.json
+## [*] Add config variations, read .fast-staged.toml, or fast-staged.toml or read fast-staged.json or .fast-staged.json or read "fast-staged" section in package.json
 
 **План реализации:**
 
@@ -402,7 +403,7 @@ timeout = "1sec"
 
 ---
 
-## [ ] Add checks and readable errors (create errors enum) for `no config`, `config is not valid`, `no git repository`, `no staged files found` , `no files found matched for group_name patterns`, `failed to execute command, no command found`
+## [*] Add checks and readable errors (create errors enum) for `no config`, `config is not valid`, `no git repository`, `no staged files found` , `no files found matched for group_name patterns`, `failed to execute command, no command found`
 
 **План реализации:**
 
@@ -517,9 +518,9 @@ timeout = "1sec"
 
 Рекомендуемый порядок реализации для минимизации конфликтов:
 
-1. **Обработка ошибок** (пункт 16) - критично для стабильности, нужно сделать в первую очередь
-2. **Вариации конфигов** (пункт 15) - улучшает UX, можно делать параллельно с обработкой ошибок
-3. **Базовые улучшения UI** (пункты 10, 11, 12) - не требуют изменения архитектуры
+1. **Обработка ошибок** (пункт 16) - ✅ ВЫПОЛНЕНО
+2. **Вариации конфигов** (пункт 15) - ✅ ВЫПОЛНЕНО
+3. **Базовые улучшения UI** (пункты 10, 11, 12) - ✅ ВЫПОЛНЕНО
 4. **Группы в конфиге** (пункт 5) - фундаментальное изменение, нужно сделать перед настройками групп
 5. **Настройки групп** (пункты 6, 7, 8, 14) - зависят от групп
 6. **Обработка ошибок в группах** (пункты 9, 13) - улучшения существующей логики
