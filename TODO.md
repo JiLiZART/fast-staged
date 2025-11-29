@@ -111,7 +111,7 @@ timeout = "5sec"
 
 ---
 
-## [ ] Add ability to define execution order, parallel or sequential in each group
+## [*] Add ability to define execution order, parallel or sequential in each group
 
 **План реализации:**
 
