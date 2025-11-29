@@ -1,11 +1,11 @@
 [package]
-name = "fast-staged"
+name = "fast_staged"
 version = "0.1.0"
 edition = "2024"
 authors = ["Nikolay Kost <jilizart@gmail.com>"]
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [build-dependencies]
 napi-build = "2"

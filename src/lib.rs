@@ -1,8 +1,12 @@
 #![deny(clippy::all)]
 
 use napi_derive::napi;
+use fast_staged::run;
 
 #[napi]
-pub fn plus_100(input: u32) -> u32 {
-  input + 100
+async fn main() {
+  if let Err(e) = run().await {
+    eprintln!("Error: {}", e);
+    std::process::exit(1);
+  }
 }
