@@ -1,4 +1,7 @@
 [workspace]
+edition = "2024"
+cargo-features = ["edition2024"]
+
 members = [
   "crates/*",
 ]
