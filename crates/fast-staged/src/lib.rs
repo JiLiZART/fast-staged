@@ -1,4 +1,5 @@
 use fast_glob::glob_match;
+use parse_duration::parse;
 
 use ratatui::{
   prelude::*,
@@ -72,6 +73,7 @@ enum CommandStatus {
   Running,
   Done,
   Failed,
+  Timeout,
   // Cancelled,
 }
 
@@ -82,6 +84,7 @@ impl std::fmt::Display for CommandStatus {
       CommandStatus::Running => write!(f, "Running"),
       CommandStatus::Done => write!(f, "Done"),
       CommandStatus::Failed => write!(f, "Failed"),
+      CommandStatus::Timeout => write!(f, "Timeout"),
       // CommandStatus::Cancelled => write!(f, "Cancelled"),
     }
   }
@@ -143,6 +146,7 @@ impl StatusDisplay for CommandStatus {
       CommandStatus::Failed => ("✗", Color::Red),
       CommandStatus::Running => ("⟳", Color::Yellow),
       CommandStatus::Waiting => ("⏳", Color::Gray),
+      CommandStatus::Timeout => ("⏱", Color::Magenta),
     }
   }
 }
@@ -306,6 +310,7 @@ struct FileCommand {
   filename: String,
   command: String,
   group_name: String,
+  timeout: Option<String>,
 }
 
 fn match_files_to_commands(config: &Config, changed_files: &[String]) -> Result<Vec<FileCommand>> {
@@ -332,6 +337,7 @@ fn match_files_to_commands(config: &Config, changed_files: &[String]) -> Result<
               filename: file.clone(),
               command: command.clone(),
               group_name: group.name.clone(),
+              timeout: group.timeout.clone(),
             });
           }
           matched = true;
@@ -367,6 +373,8 @@ async fn execute_commands(file_commands: Vec<FileCommand>) -> Result<Vec<TaskSta
   }
 
   for file_cmd in file_commands {
+    let timeout_str = file_cmd.timeout.clone();
+
     let state = TaskState {
       filename: file_cmd.filename.clone(),
       command: file_cmd.command.clone(),
@@ -386,26 +394,37 @@ async fn execute_commands(file_commands: Vec<FileCommand>) -> Result<Vec<TaskSta
       *state_clone.status.lock().await = CommandStatus::Running;
       *state_clone.started_at.lock().await = Some(Instant::now());
 
+      let timeout = timeout_str.as_deref().and_then(|s| parse(s).ok());
+
       // Запускаем команду
-      let output = tokio::process::Command::new("sh")
+      let command_future = tokio::process::Command::new("sh")
         .arg("-c")
         .arg(&state_clone.command)
-        .output()
-        .await;
+        .output();
+
+      let output_result = if let Some(dur) = timeout {
+        tokio::time::timeout(dur, command_future).await
+      } else {
+        Ok(command_future.await)
+      };
 
       // Обновляем статус по результату
       let mut status = state_clone.status.lock().await;
       let mut started_at = state_clone.started_at.lock().await;
       let mut duration_ms = state_clone.duration_ms.lock().await;
 
-      match output {
-        Ok(output) if output.status.success() => {
+      match output_result {
+        Ok(Ok(output)) if output.status.success() => {
           *status = CommandStatus::Done;
         }
-        _ => {
+        Ok(Ok(_)) | Ok(Err(_)) => {
           *status = CommandStatus::Failed;
         }
+        Err(_) => {
+          *status = CommandStatus::Timeout;
+        }
       }
+
       if let Some(start) = *started_at {
         *duration_ms = Some(start.elapsed().as_millis());
         *started_at = None;
