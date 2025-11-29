@@ -1,29 +1,15 @@
-use fast_glob::glob_match;
-use parse_duration::parse;
+mod app;
+mod command;
+mod config;
+mod file;
+mod render;
 
-use ratatui::{
-  prelude::*,
-  widgets::{Block, Borders, List, ListItem, Paragraph},
-};
-use std::sync::Arc;
-use tokio::sync::Mutex;
-
-use std::fs;
-use toml;
-
-use crossterm::{
-  event::{DisableMouseCapture, EnableMouseCapture},
-  execute,
-  terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
-use ratatui::backend::CrosstermBackend;
-use serde::Deserialize;
-use serde_json::Value;
-use std::collections::HashMap;
-use std::io;
-use std::path::{Path, PathBuf};
-use std::time::Instant;
-use thiserror::Error;
+use app::Result;
+use command::execute_commands;
+use config::load_config;
+use file::{get_changed_files, match_files_to_commands};
+use render::run_ui;
+use tokio::signal;
 
 pub async fn run() -> Result<()> {
   // Загрузка конфигурации
@@ -40,6 +26,16 @@ pub async fn run() -> Result<()> {
   let states = execute_commands(file_commands).await?;
 
   run_ui(states, total_files).await?;
+
+  // match signal::ctrl_c().await {
+  //   Ok(()) => {
+  //     std::process::exit(1);
+  //   }
+  //   Err(err) => {
+  //     eprintln!("Unable to listen for shutdown signal: {}", err);
+  //     // we also shut down in case of error
+  //   }
+  // }
 
   Ok(())
 }

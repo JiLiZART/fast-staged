@@ -1,12 +1,30 @@
+use crate::app::AppError;
+use crate::app::Result;
+use serde::Deserialize;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+use std::path::PathBuf;
+use toml;
+
 type FilePattern = String;
 type CommandList = Vec<String>;
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub enum ExecutionOrder {
+  #[serde(rename = "parallel")]
+  Parallel,
+  #[serde(rename = "sequential")]
+  Sequential,
+}
+
 #[derive(Debug, Clone)]
-struct Group {
-  name: String,
-  patterns: HashMap<FilePattern, CommandList>,
-  timeout: Option<String>,
-  execution_order: ExecutionOrder,
+pub struct Group {
+  pub name: String,
+  pub patterns: HashMap<FilePattern, CommandList>,
+  pub timeout: Option<String>,
+  pub execution_order: ExecutionOrder,
 }
 
 #[derive(Debug, Clone)]
@@ -133,7 +151,7 @@ pub fn load_config() -> Result<Config> {
   }
 }
 
-fn parse_groups_from_config(config: &Config) -> Vec<Group> {
+pub fn parse_groups_from_config(config: &Config) -> Vec<Group> {
   let mut groups = Vec::new();
 
   for (group_name, group_config) in &config.groups {

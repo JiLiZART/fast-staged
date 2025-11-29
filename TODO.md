@@ -514,6 +514,43 @@ timeout = "1sec"
 
 ---
 
+## [ ] Catch process signals and gracefully exit
+
+Check for signals and gracefully exit the program when a signal is received.
+
+**План реализации:**
+
+1. Добавить обработчик сигналов в `main()`:
+   ```rust
+   let mut signals = Signals::new([SIGINT, SIGTERM, SIGQUIT])?;
+   loop {
+       match signals.pending().next() {
+           Some(sig) => match sig {
+               SIGINT => println!("SIGINT received"),
+               SIGTERM => println!("SIGTERM received"),
+               SIGQUIT => println!("SIGQUIT received"),
+               _ => println!("Unknown signal received"),
+           },
+           None => break,
+       }
+   }
+   ```
+2. Обновить логику в `execute_commands()`:
+   - При получении сигнала выполнять отмену всех задач
+   - Вызывать `std::process::exit(0)` для завершения программы
+3. Обновить логику в `run_ui()`:
+   - При получении сигнала выполнять отмену всех задач
+   - Вызывать `std::process::exit(0)` для завершения программы
+4. Обновить логику в `main()`:
+   - При получении сигнала выполнять отмену всех задач
+   - Вызывать `std::process::exit(0)` для завершения программы
+5. Обновить логику в `setup_terminal()`:
+   - При получении сигнала выполнять отмену всех задач
+   - Вызывать `std::process::exit(0)` для завершения терминала
+6. Обновить логику в `restore_terminal()`:
+   - При получении сигнала выполнять отмену всех задач
+   - Вызывать `std::process::exit(0)` для завершения терминала
+
 ## Приоритет реализации
 
 Рекомендуемый порядок реализации для минимизации конфликтов:

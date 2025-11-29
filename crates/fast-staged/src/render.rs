@@ -1,3 +1,22 @@
+use crate::app::Result;
+use crate::command::CommandStatus;
+use crate::command::TaskState;
+use std::collections::HashMap;
+use std::io;
+use std::time::Instant;
+
+use crossterm::{
+  event::{DisableMouseCapture, EnableMouseCapture},
+  execute,
+  terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+
+use gix::trace::debug;
+use ratatui::{
+  backend::CrosstermBackend,
+  prelude::*,
+  widgets::{Block, Borders, List, ListItem, Paragraph},
+};
 
 trait StatusDisplay {
   fn colored(&self) -> (&str, Color);
@@ -157,6 +176,7 @@ pub async fn run_ui(states: Vec<TaskState>, total_files: usize) -> Result<()> {
             command, count, total, avg
           ));
         }
+        stats_lines.sort_by_key(|name| name.to_lowercase());
         let stats_text = stats_lines.join("\n");
         let stats_block = Paragraph::new(stats_text)
           .block(
@@ -173,6 +193,8 @@ pub async fn run_ui(states: Vec<TaskState>, total_files: usize) -> Result<()> {
     let all_done = statuses
       .iter()
       .all(|status| *status == CommandStatus::Done || *status == CommandStatus::Failed);
+
+    debug!("all_done: {}", all_done);
 
     if all_done {
       // Ждем немного перед закрытием, чтобы пользователь увидел финальный статус

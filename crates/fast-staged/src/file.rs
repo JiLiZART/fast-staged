@@ -1,23 +1,23 @@
-
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub enum ExecutionOrder {
-  #[serde(rename = "parallel")]
-  Parallel,
-  #[serde(rename = "sequential")]
-  Sequential,
-}
+use crate::app::AppError;
+use crate::app::Result;
+use crate::config::Config;
+use crate::config::ExecutionOrder;
+use crate::config::parse_groups_from_config;
+use fast_glob::glob_match;
 
 #[derive(Debug, Clone)]
 pub struct FileCommand {
-  filename: String,
-  command: String,
-  group_name: String,
-  timeout: Option<String>,
-  execution_order: ExecutionOrder,
+  pub filename: String,
+  pub command: String,
+  pub group_name: String,
+  pub timeout: Option<String>,
+  pub execution_order: ExecutionOrder,
 }
 
-pub fn match_files_to_commands(config: &Config, changed_files: &[String]) -> Result<Vec<FileCommand>> {
+pub fn match_files_to_commands(
+  config: &Config,
+  changed_files: &[String],
+) -> Result<Vec<FileCommand>> {
   let groups = parse_groups_from_config(config);
   let mut file_commands = Vec::new();
   let mut all_patterns: Vec<String> = Vec::new();

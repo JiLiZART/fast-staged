@@ -14,3 +14,4 @@
 [ ] Add ability to define relative or absolute file paths will be passed to command for each group
 [ ] Add config variations, read .fast-staged.toml, or fast-staged.toml or read fast-staged.json or .fast-staged.json or read "fast-staged" section in package.json
 [ ] Add checks and readable errors (create errors enum) for `no config`, `config is not valid`, `no git repository`, `no staged files found` , `no files found matched for group_name patterns`, `failed to execute command, no command found`,
+[ ] Catch process signals and gracefully exit

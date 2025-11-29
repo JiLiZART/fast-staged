@@ -3,7 +3,6 @@ name = "fast_staged"
 version = "0.1.0"
 edition = "2024"
 authors = ["Nikolay Kost <jilizart@gmail.com>"]
-cargo-features = ["edition2024"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

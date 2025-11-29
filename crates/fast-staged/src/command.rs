@@ -1,7 +1,38 @@
+use crate::app::AppError;
+use crate::app::Result;
+use crate::config::ExecutionOrder;
+use crate::file::FileCommand;
+// use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::Mutex;
 
+#[derive(Clone)]
+pub struct TaskState {
+  pub filename: String,
+  pub command: String,
+  // pub group_name: Option<String>,
+  pub status: Arc<Mutex<CommandStatus>>,
+  pub started_at: Arc<Mutex<Option<Instant>>>,
+  pub duration_ms: Arc<Mutex<Option<u128>>>,
+}
+
+impl TaskState {
+  pub fn from_file_command(file_cmd: FileCommand) -> Self {
+    TaskState {
+      filename: file_cmd.filename.clone(),
+      command: file_cmd.command.clone(),
+      // group_name: Some(file_cmd.group_name.clone()),
+      status: Arc::new(Mutex::new(CommandStatus::Waiting)),
+      started_at: Arc::new(Mutex::new(None)),
+      duration_ms: Arc::new(Mutex::new(None)),
+    }
+  }
+}
 
 #[derive(Debug, PartialEq, Clone)]
-enum CommandStatus {
+pub enum CommandStatus {
   Waiting,
   Running,
   Done,
@@ -41,7 +72,9 @@ pub async fn run_single_command(state: TaskState, timeout_str: Option<String>) {
   *state.status.lock().await = CommandStatus::Running;
   *state.started_at.lock().await = Some(Instant::now());
 
-  let timeout = timeout_str.as_deref().and_then(|s| parse(s).ok());
+  let timeout = timeout_str
+    .as_deref()
+    .and_then(|s| parse_duration::parse(s).ok());
 
   // Запускаем команду
   let command_future = tokio::process::Command::new("sh")
@@ -111,14 +144,7 @@ pub async fn execute_commands(file_commands: Vec<FileCommand>) -> Result<Vec<Tas
       ExecutionOrder::Parallel => {
         // Параллельный запуск: как раньше, но только для этой группы
         for file_cmd in group_cmds {
-          let state = TaskState {
-            filename: file_cmd.filename.clone(),
-            command: file_cmd.command.clone(),
-            group_name: Some(file_cmd.group_name.clone()),
-            status: Arc::new(Mutex::new(CommandStatus::Waiting)),
-            started_at: Arc::new(Mutex::new(None)),
-            duration_ms: Arc::new(Mutex::new(None)),
-          };
+          let state = TaskState::from_file_command(file_cmd.clone());
 
           states.push(state.clone());
           let timeout_str = file_cmd.timeout.clone();
@@ -132,15 +158,10 @@ pub async fn execute_commands(file_commands: Vec<FileCommand>) -> Result<Vec<Tas
       ExecutionOrder::Sequential => {
         // Последовательный запуск: одна задача на группу
         let mut group_states = Vec::new();
+
         for file_cmd in group_cmds {
-          let state = TaskState {
-            filename: file_cmd.filename.clone(),
-            command: file_cmd.command.clone(),
-            group_name: Some(file_cmd.group_name.clone()),
-            status: Arc::new(Mutex::new(CommandStatus::Waiting)),
-            started_at: Arc::new(Mutex::new(None)),
-            duration_ms: Arc::new(Mutex::new(None)),
-          };
+          let state = TaskState::from_file_command(file_cmd.clone());
+
           states.push(state.clone());
           group_states.push((state, file_cmd.timeout.clone()));
         }
