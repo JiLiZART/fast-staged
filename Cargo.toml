@@ -1,15 +1,8 @@
-[package]
-name = "fast-staged"
-version = "0.1.0"
+[workspace]
 edition = "2024"
-authors = ["Nikolay Kost <jilizart@gmail.com>"]
+cargo-features = ["edition2024"]
 
-[dependencies]
-tokio = { version = "1.0", features = ["full"] }
-toml = "0.9.8"
-serde = { version = "1.0", features = ["derive"] }
-gix = "0.74.1"
-ratatui = "0.29"
-crossterm = "0.29"
-fast-glob = "1.0"
-anyhow = "1.0.99"
+members = [
+  "crates/*",
+]
+resolver = "2"

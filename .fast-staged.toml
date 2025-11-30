@@ -1,14 +1,20 @@
-[patterns]
+timeout = "1sec"
+
+[group1.patterns]
 "*.(js|ts|tsx|jsx)" = [
-    "npm run prettier:staged",
-    "npm run lint:staged",
-    "npm run test:related",
-    "npm run i18n:scan"
+    "npm run fmt"
 ]
+
+[group2]
+timeout = "5sec"
+
+[group2.patterns]
 "*.css" = [
     "npm run prettier:staged",
     "npm run stylelint:staged"
 ]
+
+[group3.patterns]
 "**/*.rs" = [
     "cargo fmt",
     "cargo clippy",
