@@ -14,6 +14,22 @@ pub struct FileCommand {
   pub execution_order: ExecutionOrder,
 }
 
+impl FileCommand {
+  pub fn command_exists(&self) -> bool {
+    let command = &self.command;
+    // Проверяем наличие команды в PATH
+    // Для команд вида "sh -c 'command'" проверяем наличие 'sh'
+    if command.starts_with("sh -c") {
+      return which::which("sh").is_ok();
+    }
+
+    // Извлекаем первую часть команды (до пробела)
+    let first_part = command.split_whitespace().next().unwrap_or(command);
+
+    which::which(first_part).is_ok()
+  }
+}
+
 pub fn match_files_to_commands(
   config: &Config,
   changed_files: &[String],

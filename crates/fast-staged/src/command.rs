@@ -8,29 +8,6 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
 
-#[derive(Clone)]
-pub struct TaskState {
-  pub filename: String,
-  pub command: String,
-  // pub group_name: Option<String>,
-  pub status: Arc<Mutex<CommandStatus>>,
-  pub started_at: Arc<Mutex<Option<Instant>>>,
-  pub duration_ms: Arc<Mutex<Option<u128>>>,
-}
-
-impl TaskState {
-  pub fn from_file_command(file_cmd: FileCommand) -> Self {
-    TaskState {
-      filename: file_cmd.filename.clone(),
-      command: file_cmd.command.clone(),
-      // group_name: Some(file_cmd.group_name.clone()),
-      status: Arc::new(Mutex::new(CommandStatus::Waiting)),
-      started_at: Arc::new(Mutex::new(None)),
-      duration_ms: Arc::new(Mutex::new(None)),
-    }
-  }
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub enum CommandStatus {
   Waiting,
@@ -54,69 +31,80 @@ impl std::fmt::Display for CommandStatus {
   }
 }
 
-pub fn command_exists(command: &str) -> bool {
-  // Проверяем наличие команды в PATH
-  // Для команд вида "sh -c 'command'" проверяем наличие 'sh'
-  if command.starts_with("sh -c") {
-    return which::which("sh").is_ok();
-  }
-
-  // Извлекаем первую часть команды (до пробела)
-  let first_part = command.split_whitespace().next().unwrap_or(command);
-
-  which::which(first_part).is_ok()
+#[derive(Clone)]
+pub struct TaskState {
+  pub filename: String,
+  pub command: String,
+  // pub group_name: Option<String>,
+  pub status: Arc<Mutex<CommandStatus>>,
+  pub started_at: Arc<Mutex<Option<Instant>>>,
+  pub duration_ms: Arc<Mutex<Option<u128>>>,
 }
 
-pub async fn run_single_command(state: TaskState, timeout_str: Option<String>) {
-  // Обновляем статус на Running
-  *state.status.lock().await = CommandStatus::Running;
-  *state.started_at.lock().await = Some(Instant::now());
-
-  let timeout = timeout_str
-    .as_deref()
-    .and_then(|s| parse_duration::parse(s).ok());
-
-  // Запускаем команду
-  let command_future = tokio::process::Command::new("sh")
-    .arg("-c")
-    .arg(&state.command)
-    .output();
-
-  let output_result = if let Some(dur) = timeout {
-    tokio::time::timeout(dur, command_future).await
-  } else {
-    Ok(command_future.await)
-  };
-
-  // Обновляем статус по результату
-  let mut status = state.status.lock().await;
-  let mut started_at = state.started_at.lock().await;
-  let mut duration_ms = state.duration_ms.lock().await;
-
-  match output_result {
-    Ok(Ok(output)) if output.status.success() => {
-      *status = CommandStatus::Done;
-    }
-    Ok(Ok(_)) | Ok(Err(_)) => {
-      *status = CommandStatus::Failed;
-    }
-    Err(_) => {
-      *status = CommandStatus::Timeout;
+impl TaskState {
+  pub fn from_file_command(file_cmd: FileCommand) -> Self {
+    TaskState {
+      filename: file_cmd.filename.clone(),
+      command: file_cmd.command.clone(),
+      // group_name: Some(file_cmd.group_name.clone()),
+      status: Arc::new(Mutex::new(CommandStatus::Waiting)),
+      started_at: Arc::new(Mutex::new(None)),
+      duration_ms: Arc::new(Mutex::new(None)),
     }
   }
 
-  if let Some(start) = *started_at {
-    *duration_ms = Some(start.elapsed().as_millis());
-    *started_at = None;
+  pub async fn run_single_command(&self, timeout_str: Option<String>) {
+    // Обновляем статус на Running
+    *self.status.lock().await = CommandStatus::Running;
+    *self.started_at.lock().await = Some(Instant::now());
+
+    let timeout = timeout_str
+      .as_deref()
+      .and_then(|s| parse_duration::parse(s).ok());
+
+    // Запускаем команду
+    let command_future = tokio::process::Command::new("sh")
+      .arg("-c")
+      .arg(&self.command)
+      .output();
+
+    let output_result = if let Some(dur) = timeout {
+      tokio::time::timeout(dur, command_future).await
+    } else {
+      Ok(command_future.await)
+    };
+
+    // Обновляем статус по результату
+    let mut status = self.status.lock().await;
+    let mut started_at = self.started_at.lock().await;
+    let mut duration_ms = self.duration_ms.lock().await;
+
+    match output_result {
+      Ok(Ok(output)) if output.status.success() => {
+        *status = CommandStatus::Done;
+      }
+      Ok(Ok(_)) | Ok(Err(_)) => {
+        *status = CommandStatus::Failed;
+      }
+      Err(_) => {
+        *status = CommandStatus::Timeout;
+      }
+    }
+
+    if let Some(start) = *started_at {
+      *duration_ms = Some(start.elapsed().as_millis());
+      *started_at = None;
+    }
   }
 }
 
 pub async fn execute_commands(file_commands: Vec<FileCommand>) -> Result<Vec<TaskState>> {
   let mut states = Vec::new();
+  let mut handles = Vec::new();
 
   // Проверяем наличие всех команд перед запуском
   for file_cmd in &file_commands {
-    if !command_exists(&file_cmd.command) {
+    if !&file_cmd.command_exists() {
       return Err(AppError::CommandNotFound {
         command: file_cmd.command.clone(),
         reason: "Command not found in PATH".to_string(),
@@ -142,39 +130,57 @@ pub async fn execute_commands(file_commands: Vec<FileCommand>) -> Result<Vec<Tas
 
     match order {
       ExecutionOrder::Parallel => {
-        // Параллельный запуск: как раньше, но только для этой группы
+        // Параллельный запуск с использованием JoinSet для управления задачами
+        let mut join_set = tokio::task::JoinSet::new();
+
         for file_cmd in group_cmds {
           let state = TaskState::from_file_command(file_cmd.clone());
-
-          states.push(state.clone());
           let timeout_str = file_cmd.timeout.clone();
           let state_clone = state.clone();
 
-          tokio::spawn(async move {
-            run_single_command(state_clone, timeout_str).await;
+          states.push(state.clone());
+
+          let abort = join_set.spawn(async move {
+            state_clone.run_single_command(timeout_str).await;
           });
         }
+
+        // Сохраняем JoinSet для ожидания завершения
+        handles.push(join_set);
       }
       ExecutionOrder::Sequential => {
+        let mut join_set = tokio::task::JoinSet::new();
+
         // Последовательный запуск: одна задача на группу
-        let mut group_states = Vec::new();
+        let group_states: Vec<_> = group_cmds
+          .iter()
+          .map(|file_cmd| {
+            let state = TaskState::from_file_command(file_cmd.clone());
+            states.push(state.clone());
+            (state, file_cmd.timeout.clone())
+          })
+          .collect();
 
-        for file_cmd in group_cmds {
-          let state = TaskState::from_file_command(file_cmd.clone());
-
-          states.push(state.clone());
-          group_states.push((state, file_cmd.timeout.clone()));
-        }
-
-        tokio::spawn(async move {
+        let abort = join_set.spawn(async move {
           for (state, timeout_str) in group_states {
-            run_single_command(state, timeout_str).await;
+            state.run_single_command(timeout_str).await;
           }
         });
+
+        handles.push(join_set);
       }
     }
   }
 
-  // Возвращаем состояния сразу, не ждем завершения задач
+  // Ожидаем завершения всех задач
+  for mut join_set in handles {
+    while let Some(result) = join_set.join_next().await {
+      if let Err(e) = result {
+        // Логируем ошибку, но не прерываем выполнение других задач
+        eprintln!("Task failed with error: {:?}", e);
+      }
+    }
+  }
+
   Ok(states)
 }

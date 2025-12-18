@@ -9,7 +9,6 @@ use command::execute_commands;
 use config::load_config;
 use file::{get_changed_files, match_files_to_commands};
 use render::run_ui;
-use tokio::signal;
 
 pub async fn run() -> Result<()> {
   // Загрузка конфигурации
