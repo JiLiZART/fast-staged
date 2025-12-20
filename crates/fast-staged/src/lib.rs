@@ -8,7 +8,7 @@ use app::Result;
 use command::execute_commands;
 use config::load_config;
 use file::{get_changed_files, match_files_to_commands};
-use render::run_ui;
+use render::render_ui;
 
 pub async fn run() -> Result<()> {
   // Загрузка конфигурации
@@ -22,9 +22,9 @@ pub async fn run() -> Result<()> {
   let file_commands = match_files_to_commands(&config, &changed_files)?;
 
   // Запуск команд и UI параллельно
-  let states = execute_commands(file_commands).await?;
+  let (states, _) = execute_commands(file_commands).await?;
 
-  run_ui(states, total_files).await?;
+  render_ui(states, total_files).await?;
 
   // match signal::ctrl_c().await {
   //   Ok(()) => {

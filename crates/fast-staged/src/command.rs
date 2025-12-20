@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
+use tokio::task::AbortHandle;
+use tokio::task::JoinSet;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum CommandStatus {
@@ -98,9 +100,12 @@ impl TaskState {
   }
 }
 
-pub async fn execute_commands(file_commands: Vec<FileCommand>) -> Result<Vec<TaskState>> {
+pub async fn execute_commands(
+  file_commands: Vec<FileCommand>,
+) -> Result<(Vec<TaskState>, Vec<AbortHandle>)> {
   let mut states = Vec::new();
-  let mut handles = Vec::new();
+  let mut aborts = Vec::new();
+  let mut join_set = JoinSet::new();
 
   // Проверяем наличие всех команд перед запуском
   for file_cmd in &file_commands {
@@ -131,7 +136,6 @@ pub async fn execute_commands(file_commands: Vec<FileCommand>) -> Result<Vec<Tas
     match order {
       ExecutionOrder::Parallel => {
         // Параллельный запуск с использованием JoinSet для управления задачами
-        let mut join_set = tokio::task::JoinSet::new();
 
         for file_cmd in group_cmds {
           let state = TaskState::from_file_command(file_cmd.clone());
@@ -143,14 +147,11 @@ pub async fn execute_commands(file_commands: Vec<FileCommand>) -> Result<Vec<Tas
           let abort = join_set.spawn(async move {
             state_clone.run_single_command(timeout_str).await;
           });
-        }
 
-        // Сохраняем JoinSet для ожидания завершения
-        handles.push(join_set);
+          aborts.push(abort);
+        }
       }
       ExecutionOrder::Sequential => {
-        let mut join_set = tokio::task::JoinSet::new();
-
         // Последовательный запуск: одна задача на группу
         let group_states: Vec<_> = group_cmds
           .iter()
@@ -167,20 +168,18 @@ pub async fn execute_commands(file_commands: Vec<FileCommand>) -> Result<Vec<Tas
           }
         });
 
-        handles.push(join_set);
+        aborts.push(abort);
       }
     }
   }
 
   // Ожидаем завершения всех задач
-  for mut join_set in handles {
-    while let Some(result) = join_set.join_next().await {
-      if let Err(e) = result {
-        // Логируем ошибку, но не прерываем выполнение других задач
-        eprintln!("Task failed with error: {:?}", e);
-      }
+  while let Some(result) = join_set.join_next().await {
+    if let Err(e) = result {
+      // Логируем ошибку, но не прерываем выполнение других задач
+      eprintln!("Task failed with error: {:?}", e);
     }
   }
 
-  Ok(states)
+  Ok((states, aborts))
 }
