@@ -1,10 +1,12 @@
 use crate::config::load_config;
+use crate::event::{AppEvent, Event, EventHandler};
 use crate::file::{get_changed_files, match_files_to_commands};
+use crate::model::StateModel;
 use crate::render::render_frame;
 use crate::task::TaskPool;
-use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use futures::{FutureExt, StreamExt};
-use ratatui::DefaultTerminal;
+use crossterm::event::Event::Key;
+use crossterm::event::KeyEventKind;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
 use thiserror::Error;
 use tokio::time::Instant;
@@ -50,12 +52,29 @@ pub enum AppError {
 
 pub type Result<T> = std::result::Result<T, AppError>;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct App {
   /// Is the application running?
   running: bool,
   // Event stream.
-  event_stream: EventStream,
+  pub events: EventHandler,
+  pub model: StateModel,
+  pub task_pool: TaskPool,
+  pub start_time: Option<Instant>,
+  pub changed_files: Vec<String>,
+}
+
+impl Default for App {
+  fn default() -> Self {
+    Self {
+      running: false,
+      start_time: None,
+      changed_files: Vec::new(),
+      events: EventHandler::new(),
+      model: StateModel::default(),
+      task_pool: TaskPool::new(),
+    }
+  }
 }
 
 impl App {
@@ -67,66 +86,52 @@ impl App {
   /// Run the application's main loop.
   pub async fn run(mut self) -> color_eyre::Result<()> {
     self.running = true;
+    self.model.running = true;
+    self.start_time = Some(Instant::now());
+    self.changed_files = get_changed_files().await?;
 
     let mut terminal = ratatui::init();
-    let mut task_pool = TaskPool::new();
 
-    let start_time = Instant::now();
-
-    // Загрузка конфигурации
     let config = load_config()?;
 
-    // Получение измененных файлов
-    let changed_files = get_changed_files().await?;
-
-    // Сопоставление файлов с командами
-    let file_commands = match_files_to_commands(&config, &changed_files)?;
-
-    println!("pool_result start");
+    let file_commands = match_files_to_commands(&config, &self.changed_files)?;
 
     // Запуск команд
-    task_pool.execute_commands(file_commands).await?;
+    self.task_pool.execute_commands(file_commands).await?;
 
-    println!("pool_result end");
+    while self.model.running {
+      terminal.draw(|f| render_frame(f, &self.model))?;
 
-    while self.running {
-      let statuses = task_pool.statuses().await;
+      match self.events.next().await? {
+        Event::Tick => {
+          self.task_pool.pull_task().await?;
 
-      // Общее время выполнения всех команд
-      let total_execution_time = task_pool.get_total_execution_time().await;
+          let done = self.task_pool.all_done().await?;
+          let start_time = self.start_time.unwrap_or_else(Instant::now);
 
-      // Время с начала запуска
-      let elapsed_time = start_time.elapsed().as_millis();
+          self.model.command_stats = self.task_pool.get_command_stats().await;
+          self.model.command_lines = self.task_pool.get_command_list().await;
+          self.model.is_empty = self.task_pool.is_empty();
+          self.model.total_files = self.changed_files.len();
+          self.model.total_execution_time = self.task_pool.get_total_execution_time().await;
+          self.model.statuses_count = self.task_pool.statuses().await.len();
+          self.model.elapsed_time = start_time.elapsed().as_millis();
 
-      // Группировка по командам для статистики
-      let command_stats = task_pool.get_command_stats().await;
-      let command_lines = task_pool.get_command_list().await;
-
-      let is_empty = task_pool.is_empty();
-      let total_files = changed_files.len();
-      let statuses_count = statuses.len();
-
-      task_pool.pull_task().await?;
-      // self.handle_crossterm_events().await?;
-      let done = task_pool.all_done().await?;
-
-      terminal.draw(|frame| {
-        render_frame(
-          frame,
-          &command_lines,
-          &command_stats,
-          statuses_count,
-          total_files,
-          is_empty,
-          total_execution_time,
-          elapsed_time,
-        )
-      })?;
-
-      if done {
-        println!("All done");
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-        self.quit();
+          if done {
+            println!("All done");
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            // self.quit();
+          }
+        }
+        Event::Crossterm(event) => match event {
+          Key(key_event) if key_event.kind == KeyEventKind::Press => {
+            self.handle_key_events(key_event).await?
+          }
+          _ => {}
+        },
+        Event::App(app_event) => match app_event {
+          AppEvent::Quit => self.quit(),
+        },
       }
     }
 
@@ -135,33 +140,22 @@ impl App {
     Ok(())
   }
 
-  /// Reads the crossterm events and updates the state of [`App`].
-  async fn handle_crossterm_events(&mut self) -> color_eyre::Result<()> {
-    let event = self.event_stream.next().fuse().await;
-    match event {
-      Some(Ok(evt)) => match evt {
-        Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key_event(key),
-        Event::Mouse(_) => {}
-        Event::Resize(_, _) => {}
-        _ => {}
-      },
+  /// Handles the key events and updates the state of [`App`].
+  pub async fn handle_key_events(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
+    match key_event.code {
+      KeyCode::Esc | KeyCode::Char('q') => self.events.send(AppEvent::Quit),
+      KeyCode::Char('c' | 'C') if key_event.modifiers == KeyModifiers::CONTROL => {
+        self.events.send(AppEvent::Quit)
+      }
+      // Other handlers you could add here.
       _ => {}
     }
     Ok(())
   }
 
-  /// Handles the key events and updates the state of [`App`].
-  fn on_key_event(&mut self, key: KeyEvent) {
-    match (key.modifiers, key.code) {
-      (_, KeyCode::Esc | KeyCode::Char('q'))
-      | (KeyModifiers::CONTROL, KeyCode::Char('c') | KeyCode::Char('C')) => self.quit(),
-      // Add other key handlers here.
-      _ => {}
-    }
-  }
-
   /// Set running to false to quit the application.
-  fn quit(&mut self) {
+  pub fn quit(&mut self) {
     self.running = false;
+    self.model.running = false;
   }
 }

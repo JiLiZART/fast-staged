@@ -1,7 +1,9 @@
 mod app;
 mod command;
 mod config;
+mod event;
 mod file;
+mod model;
 mod render;
 mod task;
 

@@ -13,6 +13,8 @@ use ratatui::{
   widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
+use crate::model::StateModel;
+
 fn render_title<'a>(statuses_len: &'a usize, total_files: &'a usize) -> Paragraph<'a> {
   let title_text = format!(
     "Running {} tasks for {} file(s)...",
@@ -67,16 +69,17 @@ fn render_command_stats<'a>(command_stats: &'a HashMap<String, (usize, u128)>) -
     .style(Style::default().fg(Color::Cyan))
 }
 
-pub fn render_frame<'a>(
-  f: &mut Frame<'a>,
-  command_lines: &Vec<(String, Color, u128)>,
-  command_stats: &HashMap<String, (usize, u128)>,
-  statuses_count: usize,
-  total_files: usize,
-  is_empty: bool,
-  total_execution_time: u128,
-  elapsed_time: u128,
-) {
+fn render_exit_message<'a>(running: &bool) -> Paragraph<'a> {
+  let text = if *running {
+    "Press `Esc`, `Ctrl-C` or `q` to stop running."
+  } else {
+    ""
+  };
+
+  Paragraph::new(text).block(Block::default().borders(Borders::empty()))
+}
+
+pub fn render_frame<'a>(f: &mut Frame<'a>, model: &StateModel) {
   let areas = Layout::default()
     .direction(Direction::Vertical)
     .margin(1)
@@ -91,7 +94,10 @@ pub fn render_frame<'a>(
     .split(f.area());
 
   // Заголовок с информацией о файлах
-  f.render_widget(render_title(&statuses_count, &total_files), areas[0]);
+  f.render_widget(
+    render_title(&model.statuses_count, &model.total_files),
+    areas[0],
+  );
 
   let content_areas = Layout::default()
     .direction(Direction::Vertical)
@@ -99,20 +105,22 @@ pub fn render_frame<'a>(
     .split(areas[1]);
 
   // Список задач
-  if !is_empty {
-    f.render_widget(render_list(&command_lines), content_areas[0]);
+  if !model.is_empty {
+    f.render_widget(render_list(&model.command_lines), content_areas[0]);
   }
 
   // Статистика по командам
-  if !command_stats.is_empty() {
-    f.render_widget(render_command_stats(&command_stats), areas[2]);
+  if !model.command_stats.is_empty() {
+    f.render_widget(render_command_stats(&model.command_stats), areas[2]);
   }
 
   // Общее время выполнения команд
   f.render_widget(
-    render_total_time(&total_execution_time, &elapsed_time),
+    render_total_time(&model.total_execution_time, &model.elapsed_time),
     content_areas[1],
-  )
+  );
+
+  f.render_widget(render_exit_message(&model.running), areas[2])
 }
 
 pub fn setup_terminal() -> color_eyre::Result<ratatui::Terminal<CrosstermBackend<io::Stdout>>> {

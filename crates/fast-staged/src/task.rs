@@ -141,8 +141,6 @@ impl TaskPool {
       all_done.push(done);
     }
 
-    println!("task_len {:?}", task_len);
-
     Ok(task_len == 0)
 
     // Ok(all_done.iter().all(|done| *done == true))
