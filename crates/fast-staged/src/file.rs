@@ -48,10 +48,11 @@ pub fn match_files_to_commands(
     for group in &groups {
       for (pattern, commands) in &group.patterns {
         if glob_match(pattern, file) {
-          println!(
-            "Found pattern {} for file {} in group {}",
-            pattern, file, group.name
-          );
+          // println!(
+          //   "Found pattern {} for file {} in group {}",
+          //   pattern, file, group.name
+          // );
+
           for command in commands {
             file_commands.push(FileCommand {
               filename: file.clone(),

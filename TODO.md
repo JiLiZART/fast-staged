@@ -514,42 +514,118 @@ timeout = "1sec"
 
 ---
 
-## [ ] Catch process signals and gracefully exit
-
-Check for signals and gracefully exit the program when a signal is received.
+## [ ] Catch process signals or keyboard interrupts and gracefully exit
 
 **План реализации:**
 
-1. Добавить обработчик сигналов в `main()`:
-   ```rust
-   let mut signals = Signals::new([SIGINT, SIGTERM, SIGQUIT])?;
-   loop {
-       match signals.pending().next() {
-           Some(sig) => match sig {
-               SIGINT => println!("SIGINT received"),
-               SIGTERM => println!("SIGTERM received"),
-               SIGQUIT => println!("SIGQUIT received"),
-               _ => println!("Unknown signal received"),
-           },
-           None => break,
-       }
-   }
-   ```
-2. Обновить логику в `execute_commands()`:
-   - При получении сигнала выполнять отмену всех задач
-   - Вызывать `std::process::exit(0)` для завершения программы
-3. Обновить логику в `run_ui()`:
-   - При получении сигнала выполнять отмену всех задач
-   - Вызывать `std::process::exit(0)` для завершения программы
-4. Обновить логику в `main()`:
-   - При получении сигнала выполнять отмену всех задач
-   - Вызывать `std::process::exit(0)` для завершения программы
-5. Обновить логику в `setup_terminal()`:
-   - При получении сигнала выполнять отмену всех задач
-   - Вызывать `std::process::exit(0)` для завершения терминала
-6. Обновить логику в `restore_terminal()`:
-   - При получении сигнала выполнять отмену всех задач
-   - Вызывать `std::process::exit(0)` для завершения терминала
+1. Добавить зависимость `tokio::signal` (уже доступна через `tokio = { version = "1.0", features = ["full"] }`)
+2. Создать структуру для управления состоянием отмены:
+   - Добавить `Arc<AtomicBool>` для флага отмены выполнения
+   - Передавать этот флаг в `execute_commands()` и `render_ui()`
+3. Модифицировать `run()` в `lib.rs`:
+   - Создать `Arc<AtomicBool>` для флага отмены
+   - Запустить задачу для отслеживания сигналов (`tokio::signal::ctrl_c()`)
+   - При получении сигнала установить флаг отмены
+   - Передать флаг в `execute_commands()` и `render_ui()`
+4. Обновить `execute_commands()`:
+   - Принять флаг отмены как параметр
+   - В цикле проверки статусов задач проверять флаг отмены
+   - При установке флага отмены:
+     - Отменить все задачи через `JoinSet::abort_all()`
+     - Обновить статусы всех задач на `CommandStatus::Cancelled` (нужно добавить в enum)
+     - Вернуть ошибку или специальный статус
+5. Обновить `render_ui()`:
+   - Принять флаг отмены как параметр
+   - В основном цикле рендеринга проверять флаг отмены
+   - При установке флага:
+     - Выйти из цикла рендеринга
+     - Вызвать `restore_terminal()` для корректного восстановления терминала
+     - Показать сообщение об отмене в UI (опционально)
+6. Обновить `TaskState::run_single_command()`:
+   - Принять флаг отмены как параметр
+   - Периодически проверять флаг во время выполнения команды
+   - При установке флага:
+     - Убить процесс команды через `Command::kill()` (если возможно)
+     - Установить статус `CommandStatus::Cancelled`
+7. Добавить `CommandStatus::Cancelled` в enum:
+   - Добавить вариант в `CommandStatus`
+   - Добавить отображение в `StatusDisplay` trait (например, серый цвет и символ ⊘)
+   - Обновить логику проверки завершения задач в `render_ui()`
+8. Обработка сигналов в `main()` (если есть отдельный main):
+   - Использовать `tokio::signal::ctrl_c()` для отслеживания Ctrl+C
+   - При получении сигнала установить флаг отмены
+   - Дождаться завершения всех задач перед выходом
+
+**Изменения в коде:**
+
+- Добавить `use std::sync::atomic::{AtomicBool, Ordering};`
+- Добавить `use std::sync::Arc;`
+- Добавить `CommandStatus::Cancelled` в enum
+- Модифицировать сигнатуры функций:
+  ```rust
+  pub async fn run() -> Result<()> {
+      let cancellation_flag = Arc::new(AtomicBool::new(false));
+      let flag_clone = cancellation_flag.clone();
+      
+      // Spawn signal handler task
+      tokio::spawn(async move {
+          if let Ok(()) = tokio::signal::ctrl_c().await {
+              flag_clone.store(true, Ordering::Relaxed);
+          }
+      });
+      
+      // Pass flag to execute_commands and render_ui
+      let (states, mut join_set) = execute_commands(file_commands, cancellation_flag.clone()).await?;
+      render_ui(states, total_files, cancellation_flag).await?;
+      // ...
+  }
+  
+  pub async fn execute_commands(
+      file_commands: Vec<FileCommand>,
+      cancellation_flag: Arc<AtomicBool>,
+  ) -> Result<(Vec<TaskState>, JoinSet<()>)> {
+      // Check flag periodically
+      if cancellation_flag.load(Ordering::Relaxed) {
+          join_set.abort_all();
+          return Err(AppError::Cancelled);
+      }
+      // ...
+  }
+  
+  pub async fn render_ui(
+      states: Vec<TaskState>,
+      total_files: usize,
+      cancellation_flag: Arc<AtomicBool>,
+  ) -> Result<()> {
+      loop {
+          if cancellation_flag.load(Ordering::Relaxed) {
+              break;
+          }
+          // ... render logic
+      }
+      // ...
+  }
+  ```
+- Добавить проверку флага в `run_single_command()`:
+  ```rust
+  pub async fn run_single_command(&self, timeout_str: Option<String>, cancellation_flag: Arc<AtomicBool>) {
+      // Check flag before starting
+      if cancellation_flag.load(Ordering::Relaxed) {
+          *self.status.lock().await = CommandStatus::Cancelled;
+          return;
+      }
+      // ... existing logic
+      // Check flag during execution (if possible)
+  }
+  ```
+- Добавить обработку `CommandStatus::Cancelled` в UI
+- Добавить `AppError::Cancelled` в enum ошибок (опционально)
+
+**Дополнительные улучшения:**
+
+- Добавить обработку SIGTERM через `tokio::signal::unix::signal()` для Unix систем
+- Добавить таймаут для graceful shutdown (если задачи не завершаются за N секунд, принудительно завершить)
+- Сохранять состояние отмены в UI для отображения пользователю
 
 ## Приоритет реализации
 
