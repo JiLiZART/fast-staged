@@ -1,0 +1,18 @@
+
+[package]
+authors = ["Nikolay Kost nk@artkost.dev"]
+edition = "2021"
+name = "fast_staged_node"
+version = "0.1.0"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "3", features = ["async"] }
+napi-derive = "3.0.0"
+tokio = { version = "1.0", features = ["full"] }
+fast_staged = { path = "../../crates/fast-staged" }
+
+[build-dependencies]
+napi-build = "2"

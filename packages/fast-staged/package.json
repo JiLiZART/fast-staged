@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Template project for writing node package with napi-rs",
   "main": "index.js",
+  "bin": "bin/cli.js",
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/napi-rs/package-template.git"
@@ -27,13 +28,13 @@
     "targets": [
       "x86_64-pc-windows-msvc",
       "x86_64-apple-darwin",
-      "x86_64-unknown-linux-musl",
+      "x86_64-unknown-linux-gnu",
       "aarch64-apple-darwin",
-      "aarch64-unknown-linux-musl"
+      "wasm32-wasip1-threads"
     ]
   },
   "engines": {
-    "node": ">= 12.22.0 < 13 || >= 14.17.0 < 15 || >= 15.12.0 < 16 || >= 16.0.0"
+    "node": ">= 10.16.0 < 11 || >= 11.8.0 < 12 || >= 12.0.0"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
@@ -59,7 +60,7 @@
     "@emnapi/core": "^1.5.0",
     "@emnapi/runtime": "^1.5.0",
     "@napi-rs/cli": "^3.2.0",
-    "@oxc-node/core": "^0.0.34",
+    "@oxc-node/core": "^0.0.35",
     "@taplo/cli": "^0.7.0",
     "@tybys/wasm-util": "^0.10.0",
     "ava": "^6.4.1",
@@ -69,7 +70,7 @@
     "npm-run-all2": "^8.0.4",
     "oxlint": "^1.14.0",
     "prettier": "^3.6.2",
-    "tinybench": "^5.0.1",
+    "tinybench": "^6.0.0",
     "typescript": "^5.9.2"
   },
   "lint-staged": {
@@ -104,5 +105,5 @@
     "singleQuote": true,
     "arrowParens": "always"
   },
-  "packageManager": "yarn@4.11.0"
+  "packageManager": "yarn@4.12.0"
 }

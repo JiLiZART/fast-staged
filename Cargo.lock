@@ -424,6 +424,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fast_staged_node"
+version = "0.1.0"
+dependencies = [
+ "fast_staged",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "tokio",
+]
+
+[[package]]
 name = "faster-hex"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1777,6 +1788,7 @@ dependencies = [
  "napi-sys",
  "nohash-hasher",
  "rustc-hash",
+ "tokio",
 ]
 
 [[package]]
