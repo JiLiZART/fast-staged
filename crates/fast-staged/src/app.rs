@@ -9,7 +9,8 @@ use crossterm::event::KeyEventKind;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::path::PathBuf;
 use thiserror::Error;
-use tokio::time::Instant;
+use tokio::sync::mpsc;
+use tokio::time::{Duration, Instant};
 
 #[derive(Debug, Error)]
 pub enum AppError {
@@ -99,11 +100,25 @@ impl App {
     // Запуск команд
     self.task_pool.execute_commands(file_commands).await?;
 
-    while self.model.running {
-      terminal.draw(|f| render_frame(f, &self.model))?;
+    // Канал для управления частотой рендера UI
+    let (render_tx, mut render_rx) = mpsc::channel::<()>(1);
 
-      match self.events.next().await? {
-        Event::Tick => {
+    // Отдельная задача генерирует тики рендера
+    tokio::spawn(async move {
+      let mut interval = tokio::time::interval(Duration::from_millis(33));
+      loop {
+        interval.tick().await;
+        if render_tx.send(()).await.is_err() {
+          break;
+        }
+      }
+    });
+
+    while self.model.running {
+      tokio::select! {
+        // Обновление состояния из TaskPool и рендеринг UI по тикам рендера
+        Some(_) = render_rx.recv() => {
+          // Обновляем состояние выполнения задач
           self.task_pool.pull_task().await?;
 
           let done = self.task_pool.all_done().await?;
@@ -115,24 +130,40 @@ impl App {
           self.model.total_files = self.changed_files.len();
           self.model.total_execution_time = self.task_pool.get_total_execution_time().await;
           self.model.statuses_count = self.task_pool.statuses().await.len();
-          self.model.elapsed_time = start_time.elapsed().as_millis();
 
-          if done {
-            println!("All done");
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-            // self.quit();
+          if !done {
+            self.model.elapsed_time = start_time.elapsed().as_millis();
+          }
+
+          terminal.draw(|f| render_frame(f, &self.model))?;
+
+          // if done {
+          //   println!("All done");
+          //   // Даем пользователю время увидеть результат и выходим
+          //   tokio::time::sleep(Duration::from_secs(5)).await;
+          //   self.quit();
+          // }
+        }
+
+        // Обработка событий терминала и внутренних событий приложения
+        evt = self.events.next() => {
+          let evt = evt?;
+          match evt {
+            Event::Tick => {
+              // Тики от EventHandler можно игнорировать, так как рендеринг управляется отдельным каналом
+            }
+            Event::Crossterm(event) => match event {
+              Key(key_event) if key_event.kind == KeyEventKind::Press => {
+                self.handle_key_events(key_event).await?;
+              }
+              _ => {}
+            },
+            Event::App(app_event) => match app_event {
+              AppEvent::Quit => self.quit(),
+            },
           }
         }
-        Event::Crossterm(event) => match event {
-          Key(key_event) if key_event.kind == KeyEventKind::Press => {
-            self.handle_key_events(key_event).await?
-          }
-          _ => {}
-        },
-        Event::App(app_event) => match app_event {
-          AppEvent::Quit => self.quit(),
-        },
-      }
+      };
     }
 
     ratatui::restore();

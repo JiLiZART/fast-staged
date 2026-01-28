@@ -9,13 +9,14 @@ use tokio;
 fn init() {
   let rt = tokio::runtime::Builder::new_multi_thread()
     .enable_all()
-    .thread_name("my-native-module")
+    .thread_name("fast-staged")
     .build()
     .unwrap();
+
   create_custom_tokio_runtime(rt);
 }
 
-#[napi]
+#[tokio::main]
 async fn main() {
   if let Err(e) = run().await {
     eprintln!("Error: {}", e);

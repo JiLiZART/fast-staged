@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::config::ExecutionOrder;
 use crate::config::parse_groups_from_config;
 use fast_glob::glob_match;
+use gix::prelude::*;
 
 #[derive(Debug, Clone)]
 pub struct FileCommand {
