@@ -1,6 +1,6 @@
-use crate::config::load_config;
+use crate::config::Config;
 use crate::event::{AppEvent, Event, EventHandler};
-use crate::file::{get_changed_files, match_files_to_commands};
+use crate::file::FileCommand;
 use crate::model::StateModel;
 use crate::render::render_frame;
 use crate::task::TaskPool;
@@ -55,8 +55,6 @@ pub type Result<T> = std::result::Result<T, AppError>;
 
 #[derive(Debug)]
 pub struct App {
-  /// Is the application running?
-  running: bool,
   // Event stream.
   pub events: EventHandler,
   pub model: StateModel,
@@ -86,24 +84,20 @@ impl App {
 
   /// Run the application's main loop.
   pub async fn run(mut self) -> color_eyre::Result<()> {
-    self.running = true;
     self.model.running = true;
     self.start_time = Some(Instant::now());
-    self.changed_files = get_changed_files().await?;
+    self.changed_files = FileCommand::get_changed_files().await?;
 
     let mut terminal = ratatui::init();
 
-    let config = load_config()?;
+    let config = Config::load()?;
 
-    let file_commands = match_files_to_commands(&config, &self.changed_files)?;
+    let file_commands = FileCommand::match_files_to_commands(&config, &self.changed_files)?;
 
-    // Запуск команд
     self.task_pool.execute_commands(file_commands).await?;
 
-    // Канал для управления частотой рендера UI
     let (render_tx, mut render_rx) = mpsc::channel::<()>(1);
 
-    // Отдельная задача генерирует тики рендера
     tokio::spawn(async move {
       let mut interval = tokio::time::interval(Duration::from_millis(33));
       loop {
@@ -186,7 +180,6 @@ impl App {
 
   /// Set running to false to quit the application.
   pub fn quit(&mut self) {
-    self.running = false;
     self.model.running = false;
   }
 }

@@ -130,3 +130,5 @@ Cargo.lock
 /npm
 
 .idea
+
+packages/fast-staged/fast-staged

@@ -2,7 +2,6 @@
 
 use fast_staged::run;
 use napi::bindgen_prelude::*;
-use napi_derive::napi;
 use tokio;
 
 #[napi_derive::module_init]

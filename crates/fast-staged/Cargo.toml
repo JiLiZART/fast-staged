@@ -7,7 +7,7 @@ edition = "2024"
 authors = ["Nikolay Kost <jilizart@gmail.com>"]
 
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [dependencies]
 napi = "3.0.0"

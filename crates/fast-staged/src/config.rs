@@ -61,109 +61,109 @@ pub struct GroupConfig {
   patterns: HashMap<FilePattern, CommandList>,
 }
 
-pub fn find_config_file() -> Result<ConfigSource> {
-  let current_dir = std::env::current_dir()?;
-  let mut checked_paths = Vec::new();
+impl Config {
+  pub fn parse_groups(&self) -> Vec<Group> {
+    let mut groups = Vec::new();
 
-  // Порядок проверки файлов
-  let candidates: Vec<(&str, fn(PathBuf) -> ConfigSource)> = vec![
-    (".fast-staged.toml", ConfigSource::TomlFile),
-    ("fast-staged.toml", ConfigSource::TomlFile),
-    (".fast-staged.json", ConfigSource::JsonFile),
-    ("fast-staged.json", ConfigSource::JsonFile),
-    ("package.json", ConfigSource::PackageJson),
-  ];
-
-  for (filename, source_fn) in candidates {
-    let path = current_dir.join(filename);
-    checked_paths.push(path.clone());
-
-    if path.exists() {
-      return Ok(source_fn(path));
+    for (group_name, group_config) in &self.groups {
+      groups.push(Group {
+        name: group_name.clone(),
+        patterns: group_config.patterns.clone(),
+        timeout: group_config.timeout.clone().or(self.timeout.clone()),
+        execution_order: group_config
+          .execution_order
+          .unwrap_or(ExecutionOrder::Parallel),
+      });
     }
+
+    groups
   }
 
-  Err(AppError::ConfigNotFound { checked_paths })
-}
+  pub fn find_file() -> Result<ConfigSource> {
+    let current_dir = std::env::current_dir()?;
+    let mut checked_paths = Vec::new();
 
-pub fn load_config_from_package_json(path: &Path) -> Result<Config> {
-  let content = fs::read_to_string(path).map_err(|e| AppError::ConfigInvalid {
-    path: path.to_path_buf(),
-    details: format!("Failed to read package.json: {}", e),
-  })?;
+    // Порядок проверки файлов
+    let candidates: Vec<(&str, fn(PathBuf) -> ConfigSource)> = vec![
+      (".fast-staged.toml", ConfigSource::TomlFile),
+      ("fast-staged.toml", ConfigSource::TomlFile),
+      (".fast-staged.json", ConfigSource::JsonFile),
+      ("fast-staged.json", ConfigSource::JsonFile),
+      ("package.json", ConfigSource::PackageJson),
+    ];
 
-  let json: Value = serde_json::from_str(&content).map_err(|e| AppError::ConfigInvalid {
-    path: path.to_path_buf(),
-    details: format!("Invalid JSON in package.json: {}", e),
-  })?;
+    for (filename, source_fn) in candidates {
+      let path = current_dir.join(filename);
+      checked_paths.push(path.clone());
 
-  let fast_staged = json
-    .get("fast-staged")
-    .ok_or_else(|| AppError::ConfigInvalid {
-      path: path.to_path_buf(),
-      details: "No 'fast-staged' section found in package.json".to_string(),
-    })?;
+      if path.exists() {
+        return Ok(source_fn(path));
+      }
+    }
 
-  // Конвертируем JSON в Config
-  // Для простоты используем serde_json для десериализации
-  let config: Config =
-    serde_json::from_value(fast_staged.clone()).map_err(|e| AppError::ConfigInvalid {
-      path: path.to_path_buf(),
-      details: format!("Invalid 'fast-staged' section: {}", e),
-    })?;
+    Err(AppError::ConfigNotFound { checked_paths })
+  }
 
-  Ok(config)
-}
+  pub fn load() -> Result<Config> {
+    let source = Self::find_file()?;
 
-pub fn load_config() -> Result<Config> {
-  let source = find_config_file()?;
-
-  match source {
-    ConfigSource::TomlFile(path) => {
-      let config_content = fs::read_to_string(&path).map_err(|e| AppError::ConfigInvalid {
-        path: path.clone(),
-        details: format!("Failed to read file: {}", e),
-      })?;
-
-      let config: Config =
-        toml::from_str(&config_content).map_err(|e| AppError::ConfigInvalid {
+    match source {
+      ConfigSource::TomlFile(path) => {
+        let config_content = fs::read_to_string(&path).map_err(|e| AppError::ConfigInvalid {
           path: path.clone(),
-          details: format!("Invalid TOML: {}", e),
+          details: format!("Failed to read file: {}", e),
         })?;
 
-      Ok(config)
-    }
-    ConfigSource::JsonFile(path) => {
-      let config_content = fs::read_to_string(&path).map_err(|e| AppError::ConfigInvalid {
-        path: path.clone(),
-        details: format!("Failed to read file: {}", e),
-      })?;
+        let config: Config =
+          toml::from_str(&config_content).map_err(|e| AppError::ConfigInvalid {
+            path: path.clone(),
+            details: format!("Invalid TOML: {}", e),
+          })?;
 
-      let config: Config =
-        serde_json::from_str(&config_content).map_err(|e| AppError::ConfigInvalid {
+        Ok(config)
+      }
+      ConfigSource::JsonFile(path) => {
+        let config_content = fs::read_to_string(&path).map_err(|e| AppError::ConfigInvalid {
           path: path.clone(),
-          details: format!("Invalid JSON: {}", e),
+          details: format!("Failed to read file: {}", e),
         })?;
 
-      Ok(config)
+        let config: Config =
+          serde_json::from_str(&config_content).map_err(|e| AppError::ConfigInvalid {
+            path: path.clone(),
+            details: format!("Invalid JSON: {}", e),
+          })?;
+
+        Ok(config)
+      }
+      ConfigSource::PackageJson(path) => Self::load_from_package_json(&path),
     }
-    ConfigSource::PackageJson(path) => load_config_from_package_json(&path),
-  }
-}
-
-pub fn parse_groups_from_config(config: &Config) -> Vec<Group> {
-  let mut groups = Vec::new();
-
-  for (group_name, group_config) in &config.groups {
-    groups.push(Group {
-      name: group_name.clone(),
-      patterns: group_config.patterns.clone(),
-      timeout: group_config.timeout.clone().or(config.timeout.clone()),
-      execution_order: group_config
-        .execution_order
-        .unwrap_or(ExecutionOrder::Parallel),
-    });
   }
 
-  groups
+  pub fn load_from_package_json(path: &Path) -> Result<Config> {
+    let content = fs::read_to_string(path).map_err(|e| AppError::ConfigInvalid {
+      path: path.to_path_buf(),
+      details: format!("Failed to read package.json: {}", e),
+    })?;
+
+    let json: Value = serde_json::from_str(&content).map_err(|e| AppError::ConfigInvalid {
+      path: path.to_path_buf(),
+      details: format!("Invalid JSON in package.json: {}", e),
+    })?;
+
+    let fast_staged = json
+      .get("fast-staged")
+      .ok_or_else(|| AppError::ConfigInvalid {
+        path: path.to_path_buf(),
+        details: "No 'fast-staged' section found in package.json".to_string(),
+      })?;
+
+    let config: Config =
+      serde_json::from_value(fast_staged.clone()).map_err(|e| AppError::ConfigInvalid {
+        path: path.to_path_buf(),
+        details: format!("Invalid 'fast-staged' section: {}", e),
+      })?;
+
+    Ok(config)
+  }
 }

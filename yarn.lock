@@ -2191,7 +2191,7 @@ __metadata:
     tinybench: "npm:^6.0.0"
     typescript: "npm:^5.9.2"
   bin:
-    fast-staged: bin/cli.js
+    fast-staged: fast-staged
   languageName: unknown
   linkType: soft
 
