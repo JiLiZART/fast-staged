@@ -66,7 +66,6 @@ pub struct App {
 impl Default for App {
   fn default() -> Self {
     Self {
-      running: false,
       start_time: None,
       changed_files: Vec::new(),
       events: EventHandler::new(),
