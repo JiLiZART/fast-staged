@@ -40,11 +40,25 @@ pub struct Config {
   #[serde(default)]
   timeout: Option<String>,
 
+  // Порядок выполнения команд в группе
+  // "parallel" (по умолчанию) или "sequential"
+  #[serde(default)]
+  execution_order: Option<ExecutionOrder>,
+
   // Группы с паттернами и командами
   // Используем HashMap для динамических ключей групп
   #[serde(flatten)]
   groups: HashMap<String, GroupConfig>,
 }
+
+// Порядок проверки файлов
+const FILE_CANDIDATES: Vec<(&str, fn(PathBuf) -> ConfigSource)> = vec![
+  (".fast-staged.toml", ConfigSource::TomlFile),
+  ("fast-staged.toml", ConfigSource::TomlFile),
+  (".fast-staged.json", ConfigSource::JsonFile),
+  ("fast-staged.json", ConfigSource::JsonFile),
+  ("package.json", ConfigSource::PackageJson),
+];
 
 #[derive(Debug, Deserialize)]
 pub struct GroupConfig {
@@ -72,7 +86,7 @@ impl Config {
         timeout: group_config.timeout.clone().or(self.timeout.clone()),
         execution_order: group_config
           .execution_order
-          .unwrap_or(ExecutionOrder::Parallel),
+          .unwrap_or(self.execution_order.clone()),
       });
     }
 
@@ -83,17 +97,9 @@ impl Config {
     let current_dir = std::env::current_dir()?;
     let mut checked_paths = Vec::new();
 
-    // Порядок проверки файлов
-    let candidates: Vec<(&str, fn(PathBuf) -> ConfigSource)> = vec![
-      (".fast-staged.toml", ConfigSource::TomlFile),
-      ("fast-staged.toml", ConfigSource::TomlFile),
-      (".fast-staged.json", ConfigSource::JsonFile),
-      ("fast-staged.json", ConfigSource::JsonFile),
-      ("package.json", ConfigSource::PackageJson),
-    ];
-
-    for (filename, source_fn) in candidates {
+    for (filename, source_fn) in FILE_CANDIDATES {
       let path = current_dir.join(filename);
+
       checked_paths.push(path.clone());
 
       if path.exists() {
@@ -111,7 +117,7 @@ impl Config {
       ConfigSource::TomlFile(path) => {
         let config_content = fs::read_to_string(&path).map_err(|e| AppError::ConfigInvalid {
           path: path.clone(),
-          details: format!("Failed to read file: {}", e),
+          details: format!("Failed to read toml file: {}", e),
         })?;
 
         let config: Config =
@@ -125,7 +131,7 @@ impl Config {
       ConfigSource::JsonFile(path) => {
         let config_content = fs::read_to_string(&path).map_err(|e| AppError::ConfigInvalid {
           path: path.clone(),
-          details: format!("Failed to read file: {}", e),
+          details: format!("Failed to read json file: {}", e),
         })?;
 
         let config: Config =

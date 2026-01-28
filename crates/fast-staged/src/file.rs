@@ -54,7 +54,7 @@ impl FileCommand {
 
       Ok(changed_files)
     })
-      .await??;
+    .await??;
 
     Ok(changed_files)
   }
